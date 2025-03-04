@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentiment Analysis</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+    <style>
+        .sentiment-box {
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            color: white;
+        }
+        .meter {
+            height: 20px;
+            position: relative;
+            background: #f3f3f3;
+            border-radius: 25px;
+            padding: 5px;
+            box-shadow: inset 0 -1px 1px rgba(255,255,255,0.3);
+            margin-top: 10px;
+        }
+        .meter > span {
+            display: block;
+            height: 10px;
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+        .loading {
+            display: none;
+            margin-top: 15px;
+        }
+        .api-section {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid #eee;
+        }
+        .history-item {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container py-5">
+        <h1 class="text-center mb-4">Sentiment Analysis Tool</h1>
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow">
+                    <div class="card-body">
+                        <form id="sentimentForm" method="POST" action="/analyze-form">
+                            <div class="mb-3">
+                                <label for="textInput" class="form-label">Enter text to analyze:</label>
+                                <textarea class="form-control" id="textInput" name="text" rows="5" required>{{ request.form.get('text', '') }}</textarea>
+                            </div>
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-primary">Analyze Sentiment</button>
+                            </div>
+                            <div id="loading" class="loading text-center">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                            </div>
+                        </form>
+
+                        {% if error %}
+                        <div class="alert alert-danger mt-3">{{ error }}</div>
+                        {% endif %}
+
+                        {% if result %}
+                        <div class="sentiment-box mt-4" style="background-color: {{ result.color }}">
+                            <h4 class="text-center">Sentiment: {{ result.sentiment }}</h4>
+                        </div>
+                        <div class="mt-4">
+                            <h5>Analysis Results:</h5>
+                            <div class="row mt-3">
+                                <div class="col-md-6">
+                                    <p><strong>Polarity:</strong> {{ result.polarity }}</p>
+                                    <div class="meter">
+                                        <span style="width: {{ (result.polarity + 1) * 50 }}%; background-color: {{ result.color }};"></span>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <small>Negative (-1.0)</small>
+                                        <small>Neutral (0.0)</small>
+                                        <small>Positive (1.0)</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Subjectivity:</strong> {{ result.subjectivity }}</p>
+                                    <div class="meter">
+                                        <span style="width: {{ result.subjectivity * 100 }}%; background-color: #17a2b8;"></span>
+                                    </div>
+                                    <div class="d-flex justify-content-between mt-1">
+                                        <small>Objective (0.0)</small>
+                                        <small>Subjective (1.0)</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <h5>What this means:</h5>
+                                <ul>
+                                    <li><strong>Polarity</strong>: Measures how positive or negative the text is, ranging from -1 (very negative) to 1 (very positive).</li>
+                                    <li><strong>Subjectivity</strong>: Measures how subjective or opinionated the text is, ranging from 0 (very objective) to 1 (very subjective).</li>
+                                </ul>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="card shadow mt-4" id="historyCard" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0">Analysis History</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="historyList" class="mb-3"></div>
+                        <div class="d-grid">
+                            <button id="clearHistory" class="btn btn-outline-danger">Clear History</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <h3>API Usage</h3>
+                    <p>You can also use this tool via API:</p>
+                    <pre class="bg-light p-3 rounded"><code>curl -X POST http://localhost:5000/analyze \
+    -H "Content-Type: application/json" \
+    -d '{"text":"This is an amazing sentiment analysis tool!"}'</code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Load history from localStorage
+            loadHistory();
+
+            // Handle AJAX form submission
+            $("#sentimentForm").submit(function(e) {
+                if ($(this).attr('action') === '/analyze-form') {
+                    return true; // Let the normal form submission happen
+                }
+
+                e.preventDefault();
+                $("#loading").show();
+
+                $.ajax({
+                    url: "/analyze",
+                    type: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({
+                        text: $("#textInput").val()
+                    }),
+                    success: function(response) {
+                        // Save to history
+                        saveToHistory(response);
+                        loadHistory();
+
+                        // Display results
+                        displayResults(response);
+                    },
+                    error: function(error) {
+                        console.error("Error:", error);
+                        alert("An error occurred during analysis.");
+                    },
+                    complete: function() {
+                        $("#loading").hide();
+                    }
+                });
+            });
+
+            // Clear history button
+            $("#clearHistory").click(function() {
+                localStorage.removeItem("sentimentHistory");
+                $("#historyList").empty();
+                $("#historyCard").hide();
+            });
+
+            // Functions for history management
+            function saveToHistory(result) {
+                let history = JSON.parse(localStorage.getItem("sentimentHistory") || "[]");
+                // Limit history to 10 items
+                if (history.length >= 10) {
+                    history.pop();
+                }
+
+                // Add new item to the beginning
+                history.unshift({
+                    text: result.text,
+                    sentiment: result.sentiment,
+                    polarity: result.polarity,
+                    subjectivity: result.subjectivity,
+                    color: result.color,
+                    timestamp: new Date().toISOString()
+                });
+
+                localStorage.setItem("sentimentHistory", JSON.stringify(history));
+            }
+
+            function loadHistory() {
+                let history = JSON.parse(localStorage.getItem("sentimentHistory") || "[]");
+                if (history.length === 0) {
+                    $("#historyCard").hide();
+                    return;
+                }
+
+                $("#historyCard").show();
+                $("#historyList").empty();
+
+                history.forEach(function(item, index) {
+                    let date = new Date(item.timestamp);
+                    let formattedDate = date.toLocaleString();
+
+                    let historyItem = $(`
+                        <div class="history-item" style="background-color: ${item.color}30; border: 1px solid ${item.color}">
+                            <div class="d-flex justify-content-between">
+                                <strong>${item.sentiment}</strong>
+                                <small>${formattedDate}</small>
+                            </div>
+                            <p class="text-truncate mb-0 mt-1">${item.text}</p>
+                        </div>
+                    `);
+
+                    historyItem.click(function() {
+                        $("#textInput").val(item.text);
+                        $("#sentimentForm").submit();
+                    });
+
+                    $("#historyList").append(historyItem);
+                });
+            }
+
+            function displayResults(result) {
+                // Update display with result data
+                // This would be used in a fully client-side version
+            }
+        });
+    </script>
+</body>
+</html>
